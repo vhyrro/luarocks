@@ -1,8 +1,9 @@
-
+---@brief [[
 --- Assorted utilities for managing tables, plus a scheduler for rollback functions.
--- Does not requires modules directly (only as locals
--- inside specific functions) to avoid interdependencies,
--- as this is used in the bootstrapping stage of luarocks.core.cfg.
+--- Does not requires modules directly (only as locals
+--- inside specific functions) to avoid interdependencies,
+--- as this is used in the bootstrapping stage of luarocks.core.cfg.
+---@brief ]]
 
 local util = {}
 
@@ -24,13 +25,13 @@ local pack = table.pack or function(...) return { n = select("#", ...), ... } en
 
 local scheduled_functions = {}
 
+---@alias ScheduledFunctionToken { fn: function, args: table }
+
 --- Schedule a function to be executed upon program termination.
--- This is useful for actions such as deleting temporary directories
--- or failure rollbacks.
--- @param f function: Function to be executed.
--- @param ... arguments to be passed to function.
--- @return table: A token representing the scheduled execution,
--- which can be used to remove the item later from the list.
+--- This is useful for actions such as deleting temporary directories or failure rollbacks.
+---@param f function Function to be executed.
+---@param ... any Arguments to be passed to the function.
+---@return ScheduledFunctionToken token A token representing the scheduled execution, which can be used to remove the item later from the list.
 function util.schedule_function(f, ...)
    assert(type(f) == "function")
 
@@ -40,9 +41,9 @@ function util.schedule_function(f, ...)
 end
 
 --- Unschedule a function.
--- This is useful for cancelling a rollback of a completed operation.
--- @param item table: The token representing the scheduled function that was
--- returned from the schedule_function call.
+--- This is useful for cancelling a rollback of a completed operation.
+---@param item ScheduledFunctionToken The token representing the scheduled function that was returned from the `schedule_function` call.
+---@see util.schedule_function
 function util.remove_scheduled_function(item)
    for k, v in pairs(scheduled_functions) do
       if v == item then
@@ -53,42 +54,34 @@ function util.remove_scheduled_function(item)
 end
 
 --- Execute scheduled functions.
--- Some calls create temporary files and/or directories and register
--- corresponding cleanup functions. Calling this function will run
--- these function, erasing temporaries.
--- Functions are executed in the inverse order they were scheduled.
+--- Some calls create temporary files and/or directories and register corresponding cleanup functions.
+--- Calling this function will run these function, erasing temporaries. Functions are executed in the inverse order they were scheduled.
 function util.run_scheduled_functions()
    local fs = require("luarocks.fs")
    if fs.change_dir_to_root then
       fs.change_dir_to_root()
    end
    for i = #scheduled_functions, 1, -1 do
+      ---@type ScheduledFunctionToken
       local item = scheduled_functions[i]
       item.fn(unpack(item.args, 1, item.args.n))
    end
 end
 
---- Produce a Lua pattern that matches precisely the given string
--- (this is suitable to be concatenating to other patterns,
--- so it does not include beginning- and end-of-string markers (^$)
--- @param s string: The input string
--- @return string: The equivalent pattern
+--- Produce a Lua pattern that matches precisely the given string (this is suitable to be concatenating to other patterns, so it does not include beginning and end-of-string markers (`^$`).
+---@param s string The input string
+---@return string # The equivalent pattern
 function util.matchquote(s)
    return (s:gsub("[?%-+*%[%].%%()$^]","%%%1"))
 end
 
 local var_format_pattern = "%$%((%a[%a%d_]+)%)"
 
--- Check if a set of needed variables are referenced
--- somewhere in a list of definitions, warning the user
--- about any unused ones. Each key in needed_set should
--- appear as a $(XYZ) variable at least once as a
--- substring of some value of var_defs.
--- @param var_defs: a table with string keys and string
--- values, containing variable definitions.
--- @param needed_set: a set where keys are the names of
--- needed variables.
--- @param msg string: the warning message to display.
+--- Check if a set of needed variables are referenced somewhere in a list of definitions, warning the user about any unused ones.
+--- Each key in needed_set should appear as a `$(XYZ)` variable at least once as a substring of some value of `var_defs`.
+---@param var_defs table<string, string> A table with string keys and string values, containing variable definitions.
+---@param needed_set table<string, any> A set where keys are the names of needed variables.
+---@param msg string The warning message to display.
 function util.warn_if_not_used(var_defs, needed_set, msg)
    local seen = {}
    for _, val in pairs(var_defs) do
@@ -103,9 +96,11 @@ function util.warn_if_not_used(var_defs, needed_set, msg)
    end
 end
 
--- Output any entries that might remain in $(XYZ) format,
--- warning the user that substitutions have failed.
--- @param line string: the input string
+--- Output any entries that might remain in $(XYZ) format,
+--- warning the user that substitutions have failed.
+---
+---@param line string Input string.
+---@return boolean # True if there are unmatched variables, false otherwise.
 local function warn_failed_matches(line)
    local any_failed = false
    if line:match(var_format_pattern) then
@@ -457,7 +452,7 @@ do
 
       local ljv
       if cfg.lua_version == "5.1" then
-         -- Ignores extra version info for custom builds, e.g. "LuaJIT 2.1.0-beta3 some-other-version-info"  
+         -- Ignores extra version info for custom builds, e.g. "LuaJIT 2.1.0-beta3 some-other-version-info"
          ljv = util.popen_read(Q(cfg.variables["LUA_BINDIR"] .. "/" .. cfg.lua_interpreter) .. ' -e "io.write(tostring(jit and jit.version:gsub([[^%S+ (%S+).*]], [[%1]])))"')
          if ljv == "nil" then
             ljv = nil
@@ -553,11 +548,18 @@ function util.lua_is_wrapper(interp)
    return not not data:match("LUAROCKS_SYSCONFDIR")
 end
 
+---
+---@alias Opts table<string, string>
+---@param type_name string
+---@param valid_opts Opts
+---@return fun(opts: Opts): Opts
 function util.opts_table(type_name, valid_opts)
+   ---@type metatable
    local opts_mt = {}
 
    opts_mt.__index = opts_mt
 
+   ---@return string
    function opts_mt.type()
       return type_name
    end
@@ -565,10 +567,14 @@ function util.opts_table(type_name, valid_opts)
    return function(opts)
       for k, v in pairs(opts) do
          local tv = type(v)
+
          if not valid_opts[k] then
             error("invalid option: "..k)
          end
+
+         ---@type type, string?
          local vo, optional = valid_opts[k]:match("^(.-)(%??)$")
+
          if not (tv == vo or (optional == "?" and tv == nil)) then
             error("invalid type option: "..k.." - got "..tv..", expected "..vo)
          end
@@ -583,13 +589,11 @@ function util.opts_table(type_name, valid_opts)
 end
 
 --- Return a table of modules that are already provided by the VM, which
--- can be specified as dependencies without having to install an actual rock.
--- @param rockspec (optional) a rockspec table, so that rockspec format
--- version compatibility can be checked. If not given, maximum compatibility
--- is assumed.
--- @return a table with rock names as keys and versions and values,
--- specifying modules that are already provided by the VM (including
--- "lua" for the Lua version and, for format 3.0+, "luajit" if detected).
+--- can be specified as dependencies without having to install an actual rock.
+---@param rockspec? rockspec A rockspec table, so that rockspec format version compatibility can be checked.
+--- If not given, maximum compatibility is assumed.
+---@return table<string, string> versions A table with rock names as keys and versions and values.
+--- Specifies modules that are already provided by the VM (including "lua" for the Lua version and, for format 3.0+, "luajit" if detected).
 function util.get_rocks_provided(rockspec)
    local cfg = require("luarocks.core.cfg")
 
