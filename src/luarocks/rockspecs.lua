@@ -35,10 +35,15 @@ local vendored_build_type_set = {
 ---@field md5?     string The MD5 sum for the source archive.
 ---@field file?    string The filename of the source archive. Can be omitted if it can be inferred from the `source.url` field.
 ---@field dir?     string The name of the directory created when the source archive is unpacked. Can be omitted if it can be inferred from the `source.file` field.
----@field cvs?     string For SCM-based URL protocols such as "cvs://" and "git://", this field can be used to specify a tag for checking out sources.
----@field cvs_tag? string Deprecated, backwards-compatible alternative to `source.cvs`.
+---@field tag?     string For SCM-based URL protocols such as "cvs://" and "git://", this field can be used to specify a tag for checking out sources.
+---@field cvs_tag? string Deprecated, backwards-compatible alternative to `source.tag`.
 ---@field branch?  string For SCM-based URL protocols such as "git://", this field can be used to specify a branch for checking out sources.
 ---@field module?  string For SCM-based URL protocols such as "cvs://" and "git://", this field can be used to specify the module to be checked out. Can be omitted if it is the same as the basename of the `source.url` field.
+---
+---@field package protocol? string
+---@field package pathname? string
+---@field package cvs_module? string
+---@field package dir_set? boolean
 
 ---@class (exact) rockspec.description
 ---@field summary?    string A one-line description of the package.
@@ -49,6 +54,14 @@ local vendored_build_type_set = {
 ---@field maintainer? string Contact information for the rockspec maintainer (which may or may not be the package maintainer - contact for the package maintainer can usually be obtained through the address in the homepage field).
 ---@field labels?     string[] A list of short strings that specify labels for categorization of this rock. See the list of labels at [http://luarocks.org] for inspiration.
 
+---@class (exact) rockspec.variables
+---@field BINDIR string
+---@field CONFDIR string
+---@field DOCDIR string
+---@field LIBDIR string
+---@field LUADIR string
+---@field PREFIX string
+
 ---@alias Dependencies string[]
 ---@alias ExternalDependencies table<string, { header?: string, library?: string }>
 
@@ -56,19 +69,21 @@ local vendored_build_type_set = {
 ---@field build? rockspec.build
 ---@field build_dependencies? Dependencies
 ---@field dependencies? Dependencies
+---@field description? rockspec.description
 ---@field external_dependencies? ExternalDependencies
----@field format_is_at_least function
----@field hooks? unknown
----@field local_abs_filename? any
----@field name? string
 ---@field package string
----@field rocks_provided? table<string, string>
 ---@field rockspec_format? string
 ---@field source rockspec.source
 ---@field test table
 ---@field test_dependencies Dependencies
 ---@field version string
----@field description? rockspec.description
+---
+---@field package format_is_at_least fun(self, version: string): boolean
+---@field package hooks? unknown
+---@field package local_abs_filename? any
+---@field package name? string
+---@field package rocks_provided? table<string, string>
+---@field package variables rockspec.variables
 
 ---@type metatable
 local rockspec_mt = {}
@@ -92,6 +107,7 @@ end
 -- tbl.x are preserved).
 -- @param tbl table or nil: Table which may contain a "platforms" field;
 -- if it doesn't (or if nil is passed), this function does nothing.
+---@param tbl { platforms: table<string, string> }
 local function platform_overrides(tbl)
    assert(type(tbl) == "table" or not tbl)
 
@@ -108,6 +124,11 @@ local function platform_overrides(tbl)
    tbl.platforms = nil
 end
 
+---
+---@param rockspec rockspec
+---@param key string
+---@return boolean? success
+---@return string? error
 local function convert_dependencies(rockspec, key)
    if rockspec[key] then
       for i = 1, #rockspec[key] do
@@ -126,7 +147,7 @@ end
 --- Set up path-related variables for a given rock.
 -- Create a "variables" table in the rockspec table, containing
 -- adjusted variables according to the configuration file.
--- @param rockspec table: The rockspec table.
+---@param rockspec rockspec The rockspec table.
 local function configure_paths(rockspec)
    local vars = {}
    for k,v in pairs(cfg.variables) do
@@ -168,12 +189,11 @@ function rockspecs.from_persisted_table(filename, rockspec, globals, quick)
    -- @return boolean: true if rockspec format matches version or is newer, false otherwise.
    do
       local parsed_format = vers.parse_version(rockspec.rockspec_format or "1.0")
-      rockspec.format_is_at_least = function(self, version)
+      rockspec.format_is_at_least = function(_, version)
          return parsed_format >= vers.parse_version(version)
       end
    end
 
-   -- rockspec.build.copy_directories
    platform_overrides(rockspec.build)
    platform_overrides(rockspec.dependencies)
    platform_overrides(rockspec.build_dependencies)
@@ -217,7 +237,10 @@ function rockspecs.from_persisted_table(filename, rockspec, globals, quick)
       end
 
       local found = false
-      for _, dep in ipairs(rockspec.build_dependencies) do
+      -- TODO(docs): We are casting to a table because `convert_dependencies` changed
+      -- the structure of the dependency tables. We should create a type for that specific
+      -- table type and then cast to that instead.
+      for _, dep in ipairs(rockspec.build_dependencies --[[@as table]]) do
          if dep.name == build_pkg_name then
             found = true
             break
@@ -225,7 +248,7 @@ function rockspecs.from_persisted_table(filename, rockspec, globals, quick)
       end
 
       if not found then
-         table.insert(rockspec.build_dependencies, queries.from_dep_string(build_pkg_name))
+         table.insert(rockspec.build_dependencies, (queries.from_dep_string(build_pkg_name)))
       end
    end
 
